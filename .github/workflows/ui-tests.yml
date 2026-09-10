@@ -4,10 +4,15 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+concurrency:
+  group: ui-tests-${{ github.head_ref }}
+  cancel-in-progress: true
+
 jobs:
   ui-tests:
     name: Run Selenium UI tests (Chrome, headless)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout code
@@ -41,4 +46,4 @@ jobs:
             reports/junit.xml
             reports/screenshots/
           retention-days: 14
-          if-no-files-found: ignore
+          if-no-files-found: warn
