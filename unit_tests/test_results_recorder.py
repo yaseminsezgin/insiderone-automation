@@ -162,3 +162,37 @@ def test_ci_metadata_on_pull_request(monkeypatch):
         "commit_sha": "headsha",
         "ci_run_url": "https://github.com/owner/repo/actions/runs/42",
     }
+
+
+def test_ci_metadata_on_push_falls_back_to_ref_name_and_sha(monkeypatch):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_HEAD_REF", "")
+    monkeypatch.setenv("GITHUB_REF_NAME", "main")
+    monkeypatch.delenv("COMMIT_SHA", raising=False)
+    monkeypatch.setenv("GITHUB_SHA", "pushsha")
+    monkeypatch.setenv("GITHUB_RUN_ID", "42")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+
+    metadata = _ci_metadata()
+
+    assert metadata["branch"] == "main"
+    assert metadata["commit_sha"] == "pushsha"
+
+
+def test_ci_metadata_without_run_id_has_no_run_url(monkeypatch):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+
+    metadata = _ci_metadata()
+
+    assert metadata["source"] == "ci"
+    assert metadata["ci_run_url"] is None
+
+
+def test_long_error_message_keeps_last_2000_chars(recorder):
+    longrepr = "head-" + "x" * 2500 + "-tail"
+    entry = record(recorder, make_report("call", "failed", longrepr=longrepr))
+    assert len(entry["error_message"]) == 2000
+    assert entry["error_message"] == longrepr[-2000:]
+    assert entry["error_message"].endswith("-tail")
