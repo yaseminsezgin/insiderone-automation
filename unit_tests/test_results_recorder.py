@@ -1,10 +1,12 @@
 """Unit tests for the pytest results recorder (no browser needed)."""
 
 import json
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
 
+from utils import results_recorder
 from utils.results_recorder import ResultsRecorder, _ci_metadata
 
 NODEID = "tests/test_x.py::TestFlow::test_step"
@@ -196,3 +198,50 @@ def test_long_error_message_keeps_last_2000_chars(recorder):
     assert len(entry["error_message"]) == 2000
     assert entry["error_message"] == longrepr[-2000:]
     assert entry["error_message"].endswith("-tail")
+
+
+def test_sessionfinish_records_test_start_and_last_phase_finish(recorder):
+    record(
+        recorder,
+        make_report("setup", "passed", start=100.0, duration=0.5),
+        make_report("call", "passed", start=100.5, duration=2.0),
+        make_report("teardown", "passed", start=102.5, duration=0.25),
+    )
+    recorder.pytest_sessionfinish(make_session(), exitstatus=0)
+
+    test = json.loads(recorder.output_path.read_text())["tests"][0]
+    assert test["started_at"] == datetime.fromtimestamp(100.0, tz=timezone.utc).isoformat()
+    assert test["finished_at"] == datetime.fromtimestamp(102.75, tz=timezone.utc).isoformat()
+
+
+def freeze_now(monkeypatch, timestamp):
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromtimestamp(timestamp, tz=tz)
+
+    monkeypatch.setattr(results_recorder, "datetime", FrozenDatetime)
+
+
+def test_sessionfinish_run_timing_uses_session_start(recorder, monkeypatch):
+    freeze_now(monkeypatch, 1_000_123.4567)
+    recorder.session_start = 1_000_000.0
+
+    recorder.pytest_sessionfinish(make_session(), exitstatus=0)
+
+    run = json.loads(recorder.output_path.read_text())["run"]
+    assert run["started_at"] == datetime.fromtimestamp(1_000_000.0, tz=timezone.utc).isoformat()
+    assert run["finished_at"] == datetime.fromtimestamp(1_000_123.4567, tz=timezone.utc).isoformat()
+    assert run["duration_seconds"] == 123.457
+
+
+def test_sessionfinish_rounds_test_duration_to_3_decimals(recorder):
+    record(
+        recorder,
+        make_report("setup", "passed", start=100.0, duration=0.12345),
+        make_report("call", "passed", start=100.12345, duration=1.00004),
+    )
+    recorder.pytest_sessionfinish(make_session(), exitstatus=0)
+
+    test = json.loads(recorder.output_path.read_text())["tests"][0]
+    assert test["duration_seconds"] == 1.123

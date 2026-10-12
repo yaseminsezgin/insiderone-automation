@@ -142,3 +142,18 @@ def test_main_applies_schema_and_publishes_each_file(tmp_path, monkeypatch, caps
     out = capsys.readouterr().out
     assert f"{first}: stored run #7 (chrome, 5 tests, 60.0s)" in out
     assert f"{second}: run uuid-2 already stored, skipped" in out
+
+
+def test_main_falls_back_to_default_database_url(tmp_path, monkeypatch):
+    results_file = tmp_path / "results.json"
+    results_file.write_text(json.dumps(make_results()))
+
+    connect = MagicMock()
+    monkeypatch.setattr(publish_results.psycopg, "connect", connect)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr(publish_results, "publish", lambda conn, results: 7)
+    monkeypatch.setattr(sys, "argv", ["publish_results.py", str(results_file)])
+
+    assert publish_results.main() == 0
+
+    connect.assert_called_once_with("postgresql://qa:qa@localhost:5432/test_metrics")
