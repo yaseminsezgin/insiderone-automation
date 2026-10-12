@@ -245,3 +245,34 @@ def test_sessionfinish_rounds_test_duration_to_3_decimals(recorder):
 
     test = json.loads(recorder.output_path.read_text())["tests"][0]
     assert test["duration_seconds"] == 1.123
+
+
+def test_sessionstart_sets_run_start_and_duration(recorder, monkeypatch):
+    start, finish = 2_000_000.0, 2_000_042.5
+    freeze_now(monkeypatch, start)
+    recorder.pytest_sessionstart(make_session())
+    freeze_now(monkeypatch, finish)
+
+    recorder.pytest_sessionfinish(make_session(), exitstatus=0)
+
+    run = json.loads(recorder.output_path.read_text())["run"]
+    assert run["started_at"] == datetime.fromtimestamp(start, tz=timezone.utc).isoformat()
+    assert run["duration_seconds"] == 42.5
+
+
+def test_sessionfinish_creates_missing_output_directories(tmp_path):
+    output_path = tmp_path / "missing" / "nested" / "results.json"
+    recorder = ResultsRecorder(output_path, "chrome", True, "https://example.com/")
+
+    recorder.pytest_sessionfinish(make_session(), exitstatus=0)
+
+    assert json.loads(output_path.read_text())["run"]["exit_status"] == 0
+
+
+def test_ci_metadata_run_url_defaults_to_github_com(monkeypatch):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_RUN_ID", "42")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+    monkeypatch.delenv("GITHUB_SERVER_URL", raising=False)
+
+    assert _ci_metadata()["ci_run_url"] == "https://github.com/owner/repo/actions/runs/42"

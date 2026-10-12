@@ -157,3 +157,39 @@ def test_main_falls_back_to_default_database_url(tmp_path, monkeypatch):
     assert publish_results.main() == 0
 
     connect.assert_called_once_with("postgresql://qa:qa@localhost:5432/test_metrics")
+
+
+def test_publish_reraises_and_rolls_back_when_test_insert_fails():
+    conn = make_conn((7,))
+    transaction = conn.transaction.return_value
+    transaction.__exit__.return_value = False
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.executemany.side_effect = publish_results.psycopg.Error("insert failed")
+
+    with pytest.raises(publish_results.psycopg.Error, match="insert failed"):
+        publish(conn, make_results())
+
+    transaction.__exit__.assert_called_once()
+    exc_type, exc, _ = transaction.__exit__.call_args.args
+    assert exc_type is publish_results.psycopg.Error
+    assert exc is cur.executemany.side_effect
+
+
+def test_main_without_files_publishes_default_results(tmp_path, monkeypatch):
+    results_file = tmp_path / "results.json"
+    results_file.write_text(json.dumps(make_results("uuid-default")))
+
+    monkeypatch.setattr(publish_results.psycopg, "connect", MagicMock())
+    monkeypatch.setattr(publish_results, "DEFAULT_RESULTS", results_file)
+    published = []
+
+    def fake_publish(conn, results):
+        published.append(results["run"]["run_uuid"])
+        return 7
+
+    monkeypatch.setattr(publish_results, "publish", fake_publish)
+    monkeypatch.setattr(sys, "argv", ["publish_results.py"])
+
+    assert publish_results.main() == 0
+
+    assert published == ["uuid-default"]
