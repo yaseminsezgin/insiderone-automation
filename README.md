@@ -151,6 +151,13 @@ Open http://localhost:3000 (login `admin` / `admin`). The **UI Test Metrics**
 dashboard opens as the home page; the datasource and dashboard are provisioned
 from `grafana/`, so nothing has to be configured by hand.
 
+![UI Test Metrics dashboard](docs/grafana-dashboard.png)
+
+The screenshot shows four local runs (including one deliberate failure) and the
+Chrome and Firefox runs of the GitHub Actions pipeline, imported from their
+artifacts with `scripts/publish_results.py`. The CI rows carry the branch, commit
+and a link to the workflow run.
+
 | Panel | Shows |
 |-------|-------|
 | Pass rate | passed / (passed + failed + error) in the selected time range |
