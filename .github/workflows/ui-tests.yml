@@ -1,0 +1,75 @@
+name: UI Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ui-tests:
+    name: UI tests (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chrome, firefox]
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: qa
+          POSTGRES_PASSWORD: qa
+          POSTGRES_DB: test_metrics
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U qa -d test_metrics"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://qa:qa@localhost:5432/test_metrics
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run UI tests
+        run: >-
+          pytest --browser=${{ matrix.browser }} --headless
+          --html=reports/report-${{ matrix.browser }}.html --self-contained-html
+
+      - name: Log test results to database
+        if: always() && hashFiles('reports/results.json') != ''
+        run: python scripts/publish_results.py reports/results.json
+
+      - name: Show stored metrics
+        if: always() && hashFiles('reports/results.json') != ''
+        run: |
+          psql "$DATABASE_URL" -c "SELECT browser, status, total, passed, failed, errors, skipped, duration_seconds FROM test_runs ORDER BY id DESC LIMIT 1;"
+          psql "$DATABASE_URL" -c "SELECT name, status, duration_seconds FROM test_results ORDER BY id;"
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.browser }}
+          path: |
+            reports/results.json
+            reports/report-*.html
+            reports/screenshots/
+          if-no-files-found: ignore

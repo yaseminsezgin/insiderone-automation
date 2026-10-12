@@ -84,8 +84,84 @@ pages/careers_page.py           Career page + department cards
 pages/open_positions_page.py    Lever job board: filters, job list, Apply
 pages/lever_application_page.py Lever application form
 tests/test_insider_careers.py   The six scenario steps
-conftest.py                     Browser fixture, screenshots, incremental steps
+utils/results_recorder.py       Writes per-test results to reports/results.json
+conftest.py                     Browser fixture, screenshots, incremental steps, results recorder
+scripts/publish_results.py      Loads results.json into PostgreSQL
+db/schema.sql                   test_runs / test_results tables
+docker-compose.yml              PostgreSQL + Grafana for the metrics dashboard
+grafana/                        Provisioned datasource and dashboard
+.github/workflows/ui-tests.yml  CI pipeline: run tests, log results to the database
 ```
+
+## Test metrics: PostgreSQL + Grafana
+
+Every pytest session writes `reports/results.json`: one entry per test with its
+status (`passed`, `failed`, `error`, `skipped`), duration, error message and
+timestamps, plus run metadata (browser, branch, commit, CI run link).
+`scripts/publish_results.py` loads that file into PostgreSQL, and Grafana reads
+the database to visualise pass rates and execution times.
+
+### Database schema
+
+| Table | One row per | Main columns |
+|-------|-------------|--------------|
+| `test_runs` | pytest session | `browser`, `source` (`ci`/`local`), `branch`, `commit_sha`, `ci_run_url`, `started_at`, `duration_seconds`, `total`/`passed`/`failed`/`errors`/`skipped`, `status` |
+| `test_results` | test in a session | `run_id`, `name`, `status`, `duration_seconds`, `error_message`, `started_at` |
+
+Publishing is idempotent: each run carries a `run_uuid`, so loading the same file
+twice stores it once.
+
+### CI/CD pipeline
+
+`.github/workflows/ui-tests.yml` runs on every push to `main`, on pull requests
+and on demand. For each browser in the matrix (Chrome, Firefox) it:
+
+1. starts a PostgreSQL service container,
+2. runs the suite headless,
+3. **logs the results to the database** (`if: always()`, so failing runs are
+   recorded too) and prints the stored rows in the job log,
+4. uploads `results.json`, the HTML report and failure screenshots as the
+   `test-results-<browser>` artifact.
+
+The CI database lives only for the duration of the job. To see CI runs in the
+local Grafana, download the artifacts and publish them:
+
+```bash
+gh run download <run-id> --dir ci-results
+python scripts/publish_results.py ci-results/*/results.json
+```
+
+### Running Grafana locally
+
+Requires Docker.
+
+```bash
+docker compose up -d                     # PostgreSQL on :5432, Grafana on :3000
+pytest --browser=chrome --headless       # writes reports/results.json
+python scripts/publish_results.py        # loads it into PostgreSQL
+```
+
+Open http://localhost:3000 (login `admin` / `admin`). The **UI Test Metrics**
+dashboard opens as the home page; the datasource and dashboard are provisioned
+from `grafana/`, so nothing has to be configured by hand.
+
+| Panel | Shows |
+|-------|-------|
+| Pass rate | passed / (passed + failed + error) in the selected time range |
+| Test runs, Tests executed, Failed tests | volume and failure counts |
+| Avg run duration, Last run | session duration and the latest run's status |
+| Pass rate per run, Run duration | trends over time, one line per browser |
+| Average duration per test | execution time of each step, per browser |
+| Outcomes per test | passed / failed / error / skipped count of each step |
+| Per-test statistics | executions, pass rate, average / p95 / max duration |
+| Recent runs, Recent failures | latest sessions (with CI links) and failure messages |
+
+The **Browser** and **Source** filters at the top apply to every panel.
+
+`DATABASE_URL` overrides the connection string (default
+`postgresql://qa:qa@localhost:5432/test_metrics`); `POSTGRES_*` and
+`GRAFANA_ADMIN_*` override the compose credentials. `docker compose down -v`
+removes the containers and their data.
 
 ## Locator strategy
 

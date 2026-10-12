@@ -5,3 +5,5 @@ __pycache__/
 reports/screenshots/*.png
 reports/*.html
 .DS_Store
+reports/results.json
+ci-results/
