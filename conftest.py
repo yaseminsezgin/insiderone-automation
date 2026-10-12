@@ -5,6 +5,7 @@ import pytest
 from config import settings
 from utils.driver_factory import SUPPORTED_BROWSERS, create_driver
 from utils.logger import get_logger
+from utils.results_recorder import ResultsRecorder
 from utils.screenshot import take_screenshot
 
 log = get_logger("conftest")
@@ -30,6 +31,15 @@ def pytest_addoption(parser):
 def pytest_configure(config):
     config.addinivalue_line(
         "markers", "incremental: abort the remaining steps of a class once one step fails"
+    )
+    config.pluginmanager.register(
+        ResultsRecorder(
+            output_path=settings.RESULTS_FILE,
+            browser=config.getoption("--browser"),
+            headless=config.getoption("--headless"),
+            base_url=settings.BASE_URL,
+        ),
+        "results_recorder",
     )
 
 

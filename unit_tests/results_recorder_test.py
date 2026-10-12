@@ -1,0 +1,278 @@
+"""Unit tests for the pytest results recorder (no browser needed)."""
+
+import json
+from datetime import datetime, timezone
+from types import SimpleNamespace
+
+import pytest
+
+from utils import results_recorder
+from utils.results_recorder import ResultsRecorder, _ci_metadata
+
+NODEID = "tests/test_x.py::TestFlow::test_step"
+
+
+def make_report(when, outcome, longrepr=None, start=100.0, duration=1.0, **extra):
+    return SimpleNamespace(
+        nodeid=NODEID,
+        when=when,
+        failed=outcome == "failed",
+        skipped=outcome == "skipped",
+        longrepr=longrepr,
+        start=start,
+        stop=start + duration,
+        duration=duration,
+        **extra,
+    )
+
+
+def make_session(collectonly=False):
+    return SimpleNamespace(config=SimpleNamespace(option=SimpleNamespace(collectonly=collectonly)))
+
+
+@pytest.fixture
+def recorder(tmp_path):
+    return ResultsRecorder(tmp_path / "results.json", "chrome", True, "https://example.com/")
+
+
+def record(recorder, *reports):
+    for report in reports:
+        recorder.pytest_runtest_logreport(report)
+    return recorder.tests[NODEID]
+
+
+def test_passing_test_sums_phase_durations(recorder):
+    entry = record(
+        recorder,
+        make_report("setup", "passed", duration=0.5),
+        make_report("call", "passed", start=100.5, duration=2.0),
+        make_report("teardown", "passed", start=102.5, duration=0.25),
+    )
+    assert entry["status"] == "passed"
+    assert entry["duration_seconds"] == pytest.approx(2.75)
+    assert entry["error_message"] is None
+    assert entry["name"] == "test_step"
+
+
+def test_call_failure_is_failed(recorder):
+    entry = record(
+        recorder,
+        make_report("setup", "passed"),
+        make_report("call", "failed", longrepr="AssertionError: boom"),
+    )
+    assert entry["status"] == "failed"
+    assert entry["error_message"] == "AssertionError: boom"
+
+
+def test_teardown_error_does_not_override_call_failure(recorder):
+    entry = record(
+        recorder,
+        make_report("setup", "passed"),
+        make_report("call", "failed", longrepr="AssertionError: boom"),
+        make_report("teardown", "failed", longrepr="WebDriverException"),
+    )
+    assert entry["status"] == "failed"
+    assert entry["error_message"] == "AssertionError: boom"
+
+
+def test_setup_failure_is_error(recorder):
+    entry = record(recorder, make_report("setup", "failed", longrepr="fixture broke"))
+    assert entry["status"] == "error"
+
+
+def test_teardown_failure_after_pass_is_error(recorder):
+    entry = record(
+        recorder,
+        make_report("setup", "passed"),
+        make_report("call", "passed"),
+        make_report("teardown", "failed", longrepr="quit failed"),
+    )
+    assert entry["status"] == "error"
+
+
+def test_setup_skip_is_skipped_with_reason(recorder):
+    entry = record(
+        recorder,
+        make_report("setup", "skipped", longrepr=("conftest.py", 1, "Skipped: previous step failed")),
+    )
+    assert entry["status"] == "skipped"
+    assert entry["error_message"] == "Skipped: previous step failed"
+
+
+def test_skip_inside_test_body_is_skipped(recorder):
+    entry = record(
+        recorder,
+        make_report("setup", "passed"),
+        make_report("call", "skipped", longrepr=("test_x.py", 9, "Skipped: not today")),
+    )
+    assert entry["status"] == "skipped"
+
+
+def test_xfail_is_skipped_with_reason(recorder):
+    entry = record(
+        recorder,
+        make_report("setup", "passed"),
+        make_report("call", "skipped", wasxfail="known bug"),
+    )
+    assert entry["status"] == "skipped"
+    assert entry["error_message"] == "xfail: known bug"
+
+
+def test_sessionfinish_writes_results_with_exit_status(recorder):
+    recorder.pytest_sessionstart(make_session())
+    record(recorder, make_report("setup", "passed"), make_report("call", "passed"))
+    recorder.pytest_sessionfinish(make_session(), exitstatus=0)
+
+    data = json.loads(recorder.output_path.read_text())
+    assert data["run"]["browser"] == "chrome"
+    assert data["run"]["exit_status"] == 0
+    assert data["run"]["duration_seconds"] >= 0
+    assert [t["status"] for t in data["tests"]] == ["passed"]
+    assert "_finished" not in data["tests"][0]
+
+
+def test_sessionfinish_with_no_tests_keeps_exit_status(recorder):
+    recorder.pytest_sessionfinish(make_session(), exitstatus=4)
+    data = json.loads(recorder.output_path.read_text())
+    assert data["tests"] == []
+    assert data["run"]["exit_status"] == 4
+
+
+def test_collect_only_writes_nothing(recorder):
+    recorder.pytest_sessionfinish(make_session(collectonly=True), exitstatus=0)
+    assert not recorder.output_path.exists()
+
+
+def test_ci_metadata_local(monkeypatch):
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    assert _ci_metadata() == {"source": "local", "branch": None, "commit_sha": None, "ci_run_url": None}
+
+
+def test_ci_metadata_on_pull_request(monkeypatch):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_RUN_ID", "42")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+    monkeypatch.setenv("GITHUB_SERVER_URL", "https://github.com")
+    monkeypatch.setenv("GITHUB_HEAD_REF", "feature/x")
+    monkeypatch.setenv("GITHUB_REF_NAME", "7/merge")
+    monkeypatch.setenv("GITHUB_SHA", "mergesha")
+    monkeypatch.setenv("COMMIT_SHA", "headsha")
+
+    assert _ci_metadata() == {
+        "source": "ci",
+        "branch": "feature/x",
+        "commit_sha": "headsha",
+        "ci_run_url": "https://github.com/owner/repo/actions/runs/42",
+    }
+
+
+def test_ci_metadata_on_push_falls_back_to_ref_name_and_sha(monkeypatch):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_HEAD_REF", "")
+    monkeypatch.setenv("GITHUB_REF_NAME", "main")
+    monkeypatch.delenv("COMMIT_SHA", raising=False)
+    monkeypatch.setenv("GITHUB_SHA", "pushsha")
+    monkeypatch.setenv("GITHUB_RUN_ID", "42")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+
+    metadata = _ci_metadata()
+
+    assert metadata["branch"] == "main"
+    assert metadata["commit_sha"] == "pushsha"
+
+
+def test_ci_metadata_without_run_id_has_no_run_url(monkeypatch):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+
+    metadata = _ci_metadata()
+
+    assert metadata["source"] == "ci"
+    assert metadata["ci_run_url"] is None
+
+
+def test_long_error_message_keeps_last_2000_chars(recorder):
+    longrepr = "head-" + "x" * 2500 + "-tail"
+    entry = record(recorder, make_report("call", "failed", longrepr=longrepr))
+    assert len(entry["error_message"]) == 2000
+    assert entry["error_message"] == longrepr[-2000:]
+    assert entry["error_message"].endswith("-tail")
+
+
+def test_sessionfinish_records_test_start_and_last_phase_finish(recorder):
+    record(
+        recorder,
+        make_report("setup", "passed", start=100.0, duration=0.5),
+        make_report("call", "passed", start=100.5, duration=2.0),
+        make_report("teardown", "passed", start=102.5, duration=0.25),
+    )
+    recorder.pytest_sessionfinish(make_session(), exitstatus=0)
+
+    test = json.loads(recorder.output_path.read_text())["tests"][0]
+    assert test["started_at"] == datetime.fromtimestamp(100.0, tz=timezone.utc).isoformat()
+    assert test["finished_at"] == datetime.fromtimestamp(102.75, tz=timezone.utc).isoformat()
+
+
+def freeze_now(monkeypatch, timestamp):
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromtimestamp(timestamp, tz=tz)
+
+    monkeypatch.setattr(results_recorder, "datetime", FrozenDatetime)
+
+
+def test_sessionfinish_run_timing_uses_session_start(recorder, monkeypatch):
+    freeze_now(monkeypatch, 1_000_123.4567)
+    recorder.session_start = 1_000_000.0
+
+    recorder.pytest_sessionfinish(make_session(), exitstatus=0)
+
+    run = json.loads(recorder.output_path.read_text())["run"]
+    assert run["started_at"] == datetime.fromtimestamp(1_000_000.0, tz=timezone.utc).isoformat()
+    assert run["finished_at"] == datetime.fromtimestamp(1_000_123.4567, tz=timezone.utc).isoformat()
+    assert run["duration_seconds"] == 123.457
+
+
+def test_sessionfinish_rounds_test_duration_to_3_decimals(recorder):
+    record(
+        recorder,
+        make_report("setup", "passed", start=100.0, duration=0.12345),
+        make_report("call", "passed", start=100.12345, duration=1.00004),
+    )
+    recorder.pytest_sessionfinish(make_session(), exitstatus=0)
+
+    test = json.loads(recorder.output_path.read_text())["tests"][0]
+    assert test["duration_seconds"] == 1.123
+
+
+def test_sessionstart_sets_run_start_and_duration(recorder, monkeypatch):
+    start, finish = 2_000_000.0, 2_000_042.5
+    freeze_now(monkeypatch, start)
+    recorder.pytest_sessionstart(make_session())
+    freeze_now(monkeypatch, finish)
+
+    recorder.pytest_sessionfinish(make_session(), exitstatus=0)
+
+    run = json.loads(recorder.output_path.read_text())["run"]
+    assert run["started_at"] == datetime.fromtimestamp(start, tz=timezone.utc).isoformat()
+    assert run["duration_seconds"] == 42.5
+
+
+def test_sessionfinish_creates_missing_output_directories(tmp_path):
+    output_path = tmp_path / "missing" / "nested" / "results.json"
+    recorder = ResultsRecorder(output_path, "chrome", True, "https://example.com/")
+
+    recorder.pytest_sessionfinish(make_session(), exitstatus=0)
+
+    assert json.loads(output_path.read_text())["run"]["exit_status"] == 0
+
+
+def test_ci_metadata_run_url_defaults_to_github_com(monkeypatch):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_RUN_ID", "42")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+    monkeypatch.delenv("GITHUB_SERVER_URL", raising=False)
+
+    assert _ci_metadata()["ci_run_url"] == "https://github.com/owner/repo/actions/runs/42"

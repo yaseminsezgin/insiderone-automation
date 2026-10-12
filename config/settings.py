@@ -5,6 +5,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCREENSHOT_DIR = PROJECT_ROOT / "reports" / "screenshots"
+RESULTS_FILE = Path(os.getenv("RESULTS_FILE", PROJECT_ROOT / "reports" / "results.json"))
 
 # --- Application under test -------------------------------------------------
 BASE_URL = os.getenv("BASE_URL", "https://useinsider.com/")
