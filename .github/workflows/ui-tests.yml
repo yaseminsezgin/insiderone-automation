@@ -4,16 +4,21 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
+
+concurrency:
+  group: ui-tests-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   ui-tests:
-    name: UI tests (${{ matrix.browser }})
+    name: Run Selenium UI tests (${{ matrix.browser }}, headless)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -39,12 +44,14 @@ jobs:
       COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-          cache: pip
+          python-version: "3.11"
+          cache: "pip"
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -55,9 +62,13 @@ jobs:
           RESULTS_FILE: ${{ runner.temp }}/unit-results.json
 
       - name: Run UI tests
-        run: >-
-          pytest --browser=${{ matrix.browser }} --headless
-          --html=reports/report-${{ matrix.browser }}.html --self-contained-html
+        run: |
+          pytest \
+            --browser=${{ matrix.browser }} \
+            --headless \
+            --html=reports/report-${{ matrix.browser }}.html \
+            --self-contained-html \
+            --junitxml=reports/junit-${{ matrix.browser }}.xml
 
       - name: Log test results to database
         if: always() && hashFiles('reports/results.json') != ''
@@ -66,16 +77,18 @@ jobs:
       - name: Show stored metrics
         if: always() && hashFiles('reports/results.json') != ''
         run: |
-          psql "$DATABASE_URL" -c "SELECT browser, status, total, passed, failed, errors, skipped, duration_seconds FROM test_runs ORDER BY id DESC LIMIT 1;"
+          psql "$DATABASE_URL" -c "SELECT browser, status, exit_status, total, passed, failed, errors, skipped, duration_seconds FROM test_runs ORDER BY id DESC LIMIT 1;"
           psql "$DATABASE_URL" -c "SELECT name, status, duration_seconds FROM test_results ORDER BY id;"
 
-      - name: Upload test reports
+      - name: Upload test report & screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-${{ matrix.browser }}
+          name: ui-test-results-${{ matrix.browser }}
           path: |
             reports/results.json
             reports/report-*.html
+            reports/junit-*.xml
             reports/screenshots/
-          if-no-files-found: ignore
+          retention-days: 14
+          if-no-files-found: warn

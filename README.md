@@ -126,8 +126,8 @@ and on demand. For each browser in the matrix (Chrome, Firefox) it:
 3. runs the UI suite headless,
 4. **logs the results to the database** (`if: always()`, so failing runs are
    recorded too) and prints the stored rows in the job log,
-5. uploads `results.json`, the HTML report and failure screenshots as the
-   `test-results-<browser>` artifact.
+5. uploads `results.json`, the HTML and JUnit reports and failure screenshots
+   as the `ui-test-results-<browser>` artifact.
 
 The CI database lives only for the duration of the job. To see CI runs in the
 local Grafana, download the artifacts and publish them:
