@@ -25,8 +25,8 @@
           "type": "grafana-postgresql-datasource",
           "uid": "test-metrics-pg"
         },
-        "query": "SELECT DISTINCT browser FROM test_runs ORDER BY 1",
-        "definition": "SELECT DISTINCT browser FROM test_runs ORDER BY 1",
+        "query": "SELECT 'chrome' UNION SELECT 'firefox' UNION SELECT DISTINCT browser FROM test_runs ORDER BY 1",
+        "definition": "SELECT 'chrome' UNION SELECT 'firefox' UNION SELECT DISTINCT browser FROM test_runs ORDER BY 1",
         "refresh": 2,
         "multi": true,
         "includeAll": true,
@@ -49,8 +49,8 @@
           "type": "grafana-postgresql-datasource",
           "uid": "test-metrics-pg"
         },
-        "query": "SELECT DISTINCT source FROM test_runs ORDER BY 1",
-        "definition": "SELECT DISTINCT source FROM test_runs ORDER BY 1",
+        "query": "SELECT 'ci' UNION SELECT 'local' UNION SELECT DISTINCT source FROM test_runs ORDER BY 1",
+        "definition": "SELECT 'ci' UNION SELECT 'local' UNION SELECT DISTINCT source FROM test_runs ORDER BY 1",
         "refresh": 2,
         "multi": true,
         "includeAll": true,
@@ -445,6 +445,11 @@
                   "text": "✖ FAILED",
                   "color": "#d03b3b",
                   "index": 1
+                },
+                "error": {
+                  "text": "⚠ ERROR",
+                  "color": "#ec835a",
+                  "index": 2
                 }
               }
             }
@@ -1094,7 +1099,7 @@
                         "index": 1
                       },
                       "error": {
-                        "text": "✖ error",
+                        "text": "⚠ error",
                         "color": "#ec835a",
                         "index": 2
                       },
@@ -1268,7 +1273,7 @@
                         "index": 1
                       },
                       "error": {
-                        "text": "✖ error",
+                        "text": "⚠ error",
                         "color": "#ec835a",
                         "index": 2
                       },

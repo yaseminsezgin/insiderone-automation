@@ -85,6 +85,7 @@ pages/open_positions_page.py    Lever job board: filters, job list, Apply
 pages/lever_application_page.py Lever application form
 tests/test_insider_careers.py   The six scenario steps
 utils/results_recorder.py       Writes per-test results to reports/results.json
+unit_tests/                     Unit tests for the recorder and publisher (`pytest unit_tests`)
 conftest.py                     Browser fixture, screenshots, incremental steps, results recorder
 scripts/publish_results.py      Loads results.json into PostgreSQL
 db/schema.sql                   test_runs / test_results tables
@@ -111,16 +112,21 @@ the database to visualise pass rates and execution times.
 Publishing is idempotent: each run carries a `run_uuid`, so loading the same file
 twice stores it once.
 
+A run's `status` is `failed` when any test failed or errored, `error` when pytest
+exited abnormally or executed no test (collection error, wrong path, interrupt),
+and `passed` otherwise. `pytest --collect-only` writes no results file.
+
 ### CI/CD pipeline
 
 `.github/workflows/ui-tests.yml` runs on every push to `main`, on pull requests
 and on demand. For each browser in the matrix (Chrome, Firefox) it:
 
 1. starts a PostgreSQL service container,
-2. runs the suite headless,
-3. **logs the results to the database** (`if: always()`, so failing runs are
+2. runs the unit tests of the metrics pipeline (`unit_tests/`),
+3. runs the UI suite headless,
+4. **logs the results to the database** (`if: always()`, so failing runs are
    recorded too) and prints the stored rows in the job log,
-4. uploads `results.json`, the HTML report and failure screenshots as the
+5. uploads `results.json`, the HTML report and failure screenshots as the
    `test-results-<browser>` artifact.
 
 The CI database lives only for the duration of the job. To see CI runs in the

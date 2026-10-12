@@ -36,6 +36,7 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://qa:qa@localhost:5432/test_metrics
+      COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
     steps:
       - uses: actions/checkout@v4
@@ -47,6 +48,11 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      - name: Run unit tests
+        run: pytest unit_tests -o log_cli=false
+        env:
+          RESULTS_FILE: ${{ runner.temp }}/unit-results.json
 
       - name: Run UI tests
         run: >-

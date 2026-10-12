@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS test_runs (
     started_at       TIMESTAMPTZ NOT NULL,
     finished_at      TIMESTAMPTZ NOT NULL,
     duration_seconds NUMERIC(10, 3) NOT NULL,
+    exit_status      INTEGER,
     total            INTEGER     NOT NULL,
     passed           INTEGER     NOT NULL,
     failed           INTEGER     NOT NULL,
@@ -31,6 +32,8 @@ CREATE TABLE IF NOT EXISTS test_results (
     started_at       TIMESTAMPTZ NOT NULL,
     finished_at      TIMESTAMPTZ NOT NULL
 );
+
+ALTER TABLE test_runs ADD COLUMN IF NOT EXISTS exit_status INTEGER;
 
 CREATE INDEX IF NOT EXISTS idx_test_runs_started_at ON test_runs (started_at);
 CREATE INDEX IF NOT EXISTS idx_test_results_run_id ON test_results (run_id);

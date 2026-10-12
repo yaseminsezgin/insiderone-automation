@@ -18,26 +18,34 @@ import psycopg
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_FILE = PROJECT_ROOT / "db" / "schema.sql"
-DEFAULT_RESULTS = PROJECT_ROOT / "reports" / "results.json"
+DEFAULT_RESULTS = Path(os.getenv("RESULTS_FILE", PROJECT_ROOT / "reports" / "results.json"))
 DEFAULT_DATABASE_URL = "postgresql://qa:qa@localhost:5432/test_metrics"
+
+
+def run_status(run: dict, counts: Counter) -> str:
+    if counts["failed"] or counts["error"]:
+        return "failed"
+    if run.get("exit_status") != 0 or not counts["passed"]:
+        return "error"
+    return "passed"
 
 
 def publish(conn: psycopg.Connection, results: dict) -> int | None:
     run, tests = results["run"], results["tests"]
     counts = Counter(test["status"] for test in tests)
-    status = "failed" if counts["failed"] or counts["error"] else "passed"
+    status = run_status(run, counts)
 
     with conn.transaction():
         run_id = conn.execute(
             """
             INSERT INTO test_runs (
                 run_uuid, source, browser, headless, base_url, branch, commit_sha,
-                ci_run_url, started_at, finished_at, duration_seconds,
+                ci_run_url, started_at, finished_at, duration_seconds, exit_status,
                 total, passed, failed, errors, skipped, status
             ) VALUES (
                 %(run_uuid)s, %(source)s, %(browser)s, %(headless)s, %(base_url)s,
                 %(branch)s, %(commit_sha)s, %(ci_run_url)s, %(started_at)s,
-                %(finished_at)s, %(duration_seconds)s, %(total)s, %(passed)s,
+                %(finished_at)s, %(duration_seconds)s, %(exit_status)s, %(total)s, %(passed)s,
                 %(failed)s, %(errors)s, %(skipped)s, %(status)s
             )
             ON CONFLICT (run_uuid) DO NOTHING
@@ -45,6 +53,7 @@ def publish(conn: psycopg.Connection, results: dict) -> int | None:
             """,
             {
                 **run,
+                "exit_status": run.get("exit_status"),
                 "total": len(tests),
                 "passed": counts["passed"],
                 "failed": counts["failed"],

@@ -26,7 +26,7 @@ def _ci_metadata() -> dict:
     return {
         "source": "ci",
         "branch": os.getenv("GITHUB_HEAD_REF") or os.getenv("GITHUB_REF_NAME"),
-        "commit_sha": os.getenv("GITHUB_SHA"),
+        "commit_sha": os.getenv("COMMIT_SHA") or os.getenv("GITHUB_SHA"),
         "ci_run_url": run_url,
     }
 
@@ -69,15 +69,23 @@ class ResultsRecorder:
         entry["_finished"] = max(entry["_finished"], report.stop)
 
         if report.failed:
-            entry["status"] = "failed" if report.when == "call" else "error"
+            if report.when == "call":
+                entry["status"] = "failed"
+            elif entry["status"] != "failed":
+                entry["status"] = "error"
             if entry["error_message"] is None:
                 entry["error_message"] = str(report.longrepr)[-2000:]
-        elif report.skipped and report.when == "setup":
+        elif report.skipped and entry["status"] == "passed":
             entry["status"] = "skipped"
-            if isinstance(report.longrepr, tuple):
+            if hasattr(report, "wasxfail"):
+                entry["error_message"] = f"xfail: {report.wasxfail}"
+            elif isinstance(report.longrepr, tuple):
                 entry["error_message"] = report.longrepr[2]
 
-    def pytest_sessionfinish(self, session):
+    def pytest_sessionfinish(self, session, exitstatus):
+        if session.config.option.collectonly:
+            return
+
         finished = datetime.now(timezone.utc).timestamp()
         tests = []
         for entry in self.tests.values():
@@ -90,6 +98,7 @@ class ResultsRecorder:
             started_at=_iso(started),
             finished_at=_iso(finished),
             duration_seconds=round(finished - started, 3),
+            exit_status=int(exitstatus),
         )
 
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
